@@ -686,6 +686,43 @@ function parseBatchImport(text, existingItems) {
     });
 }
 
+function normalizeDailyPromptData(data) {
+  if (!data || !Array.isArray(data.items)) {
+    return {
+      generatedAt: '',
+      keywords: [],
+      count: 0,
+      items: [],
+    };
+  }
+
+  const items = data.items
+    .filter((item) => item?.url && item?.title)
+    .map((item) => ({
+      id: item.id || item.url,
+      title: item.title || '未命名推荐',
+      platform: item.platform || 'YouTube',
+      url: item.url || '',
+      keyword: item.keyword || '',
+      summary: item.summary || '',
+      channelTitle: item.channelTitle || '',
+      publishedAt: item.publishedAt || '',
+      discoveredDate: normalizeDate(item.discoveredDate),
+      valueScore: normalizeScore(item.valueScore),
+      difficulty: normalizeDifficulty(item.difficulty),
+      useCase: item.useCase || '待整理',
+      status: radarStatuses.includes(item.status) ? item.status : '未处理',
+      source: item.source || 'auto-youtube',
+    }));
+
+  return {
+    generatedAt: data.generatedAt || '',
+    keywords: Array.isArray(data.keywords) ? data.keywords : [],
+    count: Number.isFinite(Number(data.count)) ? Number(data.count) : items.length,
+    items,
+  };
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('library');
   const [prompts, setPrompts] = useState(loadPrompts);
@@ -709,6 +746,9 @@ export default function App() {
   const [youtubeResults, setYoutubeResults] = useState([]);
   const [youtubeLoading, setYoutubeLoading] = useState(false);
   const [youtubeError, setYoutubeError] = useState('');
+  const [autoDailyData, setAutoDailyData] = useState(null);
+  const [autoDailyLoading, setAutoDailyLoading] = useState(true);
+  const [autoDailyError, setAutoDailyError] = useState('');
   const [copiedId, setCopiedId] = useState('');
   const [toast, setToast] = useState('');
 
@@ -735,6 +775,46 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(''), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDailyPrompts() {
+      setAutoDailyLoading(true);
+      setAutoDailyError('');
+
+      try {
+        const response = await fetch('/daily-prompts.json', {
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          throw new Error('daily-prompts-missing');
+        }
+
+        const data = normalizeDailyPromptData(await response.json());
+
+        if (active) {
+          setAutoDailyData(data);
+        }
+      } catch {
+        if (active) {
+          setAutoDailyData(null);
+          setAutoDailyError('暂无自动推荐数据，可先使用手动搜索');
+        }
+      } finally {
+        if (active) {
+          setAutoDailyLoading(false);
+        }
+      }
+    }
+
+    loadDailyPrompts();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredPrompts = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -1103,6 +1183,45 @@ export default function App() {
     showToast('已保存到每日雷达');
   }
 
+  function saveAutoRecommendationToRadar(item) {
+    const url = item.url.trim().toLowerCase();
+    const alreadySaved = radarItems.some(
+      (radarItem) => radarItem.url.trim().toLowerCase() === url,
+    );
+
+    if (alreadySaved) {
+      showToast('这条自动推荐已存在于每日雷达');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setRadarItems((current) => [
+      normalizeRadarItem({
+        id: createId('radar'),
+        title: item.title,
+        platform: item.platform || 'YouTube',
+        url: item.url,
+        keyword: item.keyword,
+        summary: item.summary,
+        valueScore: item.valueScore || 3,
+        difficulty: item.difficulty || '中',
+        useCase: item.useCase || '待整理',
+        discoveredDate: item.discoveredDate || getTodayDate(),
+        status: '未处理',
+        createdAt: now,
+        updatedAt: now,
+      }),
+      ...current,
+    ]);
+
+    setRadarPlatformFilter('全部');
+    setRadarStatusFilter('全部');
+    setRadarDateFilter('');
+    setRadarQuery('');
+    setRadarSortMode('updatedDesc');
+    showToast('已保存自动推荐到每日雷达');
+  }
+
   function updateRadarStatus(id, status) {
     const now = new Date().toISOString();
     setRadarItems((current) =>
@@ -1272,7 +1391,7 @@ export default function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">PromptRadar Mini V0.4</p>
+            <p className="eyebrow">PromptRadar Mini V0.5</p>
             <h1>
               {activePage === 'library' ? '我的提示词库' : '每日提示词雷达'}
             </h1>
@@ -1310,6 +1429,9 @@ export default function App() {
           <RadarPage
             batchPreview={batchPreview}
             batchText={batchText}
+            autoDailyData={autoDailyData}
+            autoDailyError={autoDailyError}
+            autoDailyLoading={autoDailyLoading}
             copiedId={copiedId}
             dailySummary={dailySummary}
             draft={radarDraft}
@@ -1338,6 +1460,7 @@ export default function App() {
             todayCount={todayRadarItems.length}
             onSearchYouTube={searchYouTube}
             onSaveYouTubeResult={saveYouTubeResultToRadar}
+            onSaveAutoRecommendation={saveAutoRecommendationToRadar}
             setShowYoutubeKey={setShowYoutubeKey}
             setYoutubeSettings={updateYoutubeSettings}
             showYoutubeKey={showYoutubeKey}
@@ -1655,6 +1778,9 @@ function PromptCard({
 }
 
 function RadarPage({
+  autoDailyData,
+  autoDailyError,
+  autoDailyLoading,
   batchPreview,
   batchText,
   copiedId,
@@ -1684,6 +1810,7 @@ function RadarPage({
   statusFilter,
   todayCount,
   onSearchYouTube,
+  onSaveAutoRecommendation,
   onSaveYouTubeResult,
   setShowYoutubeKey,
   setYoutubeSettings,
@@ -1917,6 +2044,13 @@ function RadarPage({
         </form>
 
         <section className="radar-list-panel">
+          <AutoDailyRecommendationsPanel
+            data={autoDailyData}
+            error={autoDailyError}
+            loading={autoDailyLoading}
+            onSave={onSaveAutoRecommendation}
+          />
+
           <div className="youtube-panel">
             <div className="section-heading">
               <Search size={20} aria-hidden="true" />
@@ -2193,6 +2327,89 @@ function RadarPage({
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+function AutoDailyRecommendationsPanel({ data, error, loading, onSave }) {
+  const items = data?.items || [];
+
+  return (
+    <div className="auto-panel">
+      <div className="section-heading">
+        <Sparkles size={20} aria-hidden="true" />
+        <h2>每日自动推荐</h2>
+      </div>
+
+      {loading ? (
+        <p className="helper-copy">正在读取每日自动推荐...</p>
+      ) : null}
+
+      {!loading && error ? (
+        <div className="empty-inline" role="status">
+          {error}
+        </div>
+      ) : null}
+
+      {!loading && data ? (
+        <div className="auto-meta">
+          <span>生成时间：{data.generatedAt ? formatDate(data.generatedAt) : '未知'}</span>
+          <span>推荐数量：{data.count}</span>
+          <span>
+            关键词：
+            {data.keywords.length ? data.keywords.join(' / ') : '未配置'}
+          </span>
+        </div>
+      ) : null}
+
+      {!loading && data && !items.length ? (
+        <div className="empty-inline">暂无自动推荐数据，可先使用手动搜索</div>
+      ) : null}
+
+      {items.length ? (
+        <div className="auto-results" aria-label="每日自动推荐列表">
+          {items.map((item) => (
+            <article className="auto-result-card" key={`${item.url}-${item.keyword}`}>
+              <div className="card-topline">
+                <div className="card-meta">
+                  <span>{item.platform}</span>
+                  {item.channelTitle ? <span>{item.channelTitle}</span> : null}
+                </div>
+              </div>
+              <h3>{item.title}</h3>
+              <p className="signal-copy">{item.summary || '暂无摘要'}</p>
+              <div className="radar-facts">
+                <span>关键词：{item.keyword || '未填写'}</span>
+                <span>
+                  发布时间：
+                  {item.publishedAt
+                    ? new Date(item.publishedAt).toLocaleString('zh-CN', {
+                        hour12: false,
+                      })
+                    : '未知'}
+                </span>
+              </div>
+              <a
+                className="radar-link"
+                href={item.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <LinkIcon size={16} aria-hidden="true" />
+                <span>{item.url}</span>
+              </a>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onSave(item)}
+              >
+                <Save size={18} />
+                <span>保存到雷达</span>
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

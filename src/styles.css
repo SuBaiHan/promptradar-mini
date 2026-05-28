@@ -742,6 +742,7 @@ textarea:focus {
   background: rgba(237, 249, 246, 0.52);
 }
 
+.auto-panel,
 .youtube-panel {
   display: grid;
   gap: 14px;
@@ -749,6 +750,10 @@ textarea:focus {
   border: 1px solid rgba(18, 60, 58, 0.16);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.94);
+}
+
+.auto-panel {
+  background: rgba(237, 249, 246, 0.52);
 }
 
 .helper-copy {
@@ -789,6 +794,28 @@ textarea:focus {
   gap: 12px;
 }
 
+.auto-results {
+  display: grid;
+  gap: 12px;
+}
+
+.auto-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auto-meta span {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #fffefb;
+  color: #4e565d;
+  font-size: 0.82rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .youtube-result-card {
   display: grid;
   gap: 10px;
@@ -799,8 +826,28 @@ textarea:focus {
   background: #fffefb;
 }
 
+.auto-result-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(35, 38, 41, 0.1);
+  border-radius: 8px;
+  background: #fffefb;
+}
+
+.auto-result-card .secondary-button,
 .youtube-result-card .secondary-button {
   justify-self: start;
+}
+
+.empty-inline {
+  padding: 12px;
+  border: 1px dashed rgba(15, 118, 110, 0.28);
+  border-radius: 8px;
+  background: #fffefb;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .summary-actions {
