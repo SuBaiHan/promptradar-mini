@@ -7,6 +7,8 @@ import {
   Copy,
   Download,
   Edit3,
+  Eye,
+  EyeOff,
   FileText,
   Filter,
   Library,
@@ -24,6 +26,8 @@ import {
 
 const PROMPTS_STORAGE_KEY = 'promptradar-mini-prompts';
 const RADAR_STORAGE_KEY = 'promptradar-mini-radar-items';
+const YOUTUBE_SETTINGS_STORAGE_KEY = 'promptradar-mini-youtube-settings';
+const YOUTUBE_SEARCH_ENDPOINT = 'https://www.googleapis.com/youtube/v3/search';
 
 const sceneOptions = [
   '写作',
@@ -49,6 +53,13 @@ const platformOptions = [
 
 const radarStatuses = ['未处理', '值得收藏', '已忽略', '已收藏'];
 const difficultyOptions = ['低', '中', '高'];
+
+const defaultYoutubeSettings = {
+  apiKey: '',
+  query: '',
+  maxResults: 10,
+  order: 'relevance',
+};
 
 const blankPrompt = {
   title: '',
@@ -272,11 +283,69 @@ function normalizeScore(value) {
   return Math.min(5, Math.max(1, Math.round(score)));
 }
 
+function normalizeYoutubeSettings(settings = {}) {
+  const maxResults = Number(settings.maxResults);
+  const order = ['relevance', 'date'].includes(settings.order)
+    ? settings.order
+    : 'relevance';
+
+  return {
+    apiKey: settings.apiKey || '',
+    query: settings.query || '',
+    maxResults: Number.isNaN(maxResults)
+      ? 10
+      : Math.min(25, Math.max(1, Math.round(maxResults))),
+    order,
+  };
+}
+
+function loadYoutubeSettings() {
+  try {
+    const saved = localStorage.getItem(YOUTUBE_SETTINGS_STORAGE_KEY);
+    if (!saved) {
+      return defaultYoutubeSettings;
+    }
+
+    return normalizeYoutubeSettings(JSON.parse(saved));
+  } catch {
+    return defaultYoutubeSettings;
+  }
+}
+
 function normalizeDate(value) {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return value;
   }
   return getTodayDate();
+}
+
+function truncateText(value = '', maxLength = 120) {
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function getReadableYoutubeError(error) {
+  const reason = error?.errors?.[0]?.reason || error?.reason || '';
+  const message = error?.message || '';
+
+  if (['quotaExceeded', 'dailyLimitExceeded'].includes(reason)) {
+    return 'YouTube API 配额不足，请稍后再试或检查 Google Cloud 配额。';
+  }
+
+  if (
+    ['keyInvalid', 'badRequest', 'forbidden', 'accessNotConfigured'].includes(
+      reason,
+    ) ||
+    message.toLowerCase().includes('api key')
+  ) {
+    return '请求被 YouTube 拒绝，请检查 API Key 是否正确、API 是否已启用。';
+  }
+
+  if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
+    return '请求过于频繁或配额受限，请稍后再手动搜索。';
+  }
+
+  return 'YouTube 搜索失败，请检查网络、API Key 和关键词后再试。';
 }
 
 function loadPrompts() {
@@ -609,6 +678,11 @@ export default function App() {
   const [batchText, setBatchText] = useState('');
   const [batchPreview, setBatchPreview] = useState([]);
   const [dailySummary, setDailySummary] = useState('');
+  const [youtubeSettings, setYoutubeSettings] = useState(loadYoutubeSettings);
+  const [showYoutubeKey, setShowYoutubeKey] = useState(false);
+  const [youtubeResults, setYoutubeResults] = useState([]);
+  const [youtubeLoading, setYoutubeLoading] = useState(false);
+  const [youtubeError, setYoutubeError] = useState('');
   const [copiedId, setCopiedId] = useState('');
   const [toast, setToast] = useState('');
 
@@ -619,6 +693,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(radarItems));
   }, [radarItems]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      YOUTUBE_SETTINGS_STORAGE_KEY,
+      JSON.stringify(normalizeYoutubeSettings(youtubeSettings)),
+    );
+  }, [youtubeSettings]);
 
   useEffect(() => {
     if (!toast) {
@@ -703,6 +784,14 @@ export default function App() {
 
   function showToast(message) {
     setToast(message);
+  }
+
+  function updateYoutubeSettings(updater) {
+    setYoutubeSettings((current) =>
+      normalizeYoutubeSettings(
+        typeof updater === 'function' ? updater(current) : updater,
+      ),
+    );
   }
 
   async function copyText(text, feedbackId, message) {
@@ -867,6 +956,125 @@ export default function App() {
     ]);
     setRadarDraft({ ...blankRadarDraft, discoveredDate: getTodayDate() });
     showToast(radarDraft.url.trim() ? '雷达内容已添加' : '未填写来源链接，已保存');
+  }
+
+  async function searchYouTube() {
+    const apiKey = youtubeSettings.apiKey.trim();
+    const queryText = youtubeSettings.query.trim();
+
+    if (!apiKey) {
+      setYoutubeError('请先填写 YouTube API Key。');
+      showToast('请先填写 YouTube API Key');
+      return;
+    }
+
+    if (!queryText) {
+      setYoutubeError('请先填写搜索关键词。');
+      showToast('请先填写搜索关键词');
+      return;
+    }
+
+    const maxResults = Math.min(
+      25,
+      Math.max(1, Number(youtubeSettings.maxResults) || 10),
+    );
+    const params = new URLSearchParams({
+      part: 'snippet',
+      type: 'video',
+      q: queryText,
+      maxResults: String(maxResults),
+      order: youtubeSettings.order,
+      key: apiKey,
+    });
+
+    setYoutubeLoading(true);
+    setYoutubeError('');
+    setYoutubeResults([]);
+
+    try {
+      const response = await fetch(`${YOUTUBE_SEARCH_ENDPOINT}?${params}`);
+      let data = null;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error('invalid-json');
+      }
+
+      if (!response.ok || data?.error) {
+        setYoutubeError(getReadableYoutubeError(data?.error));
+        return;
+      }
+
+      const results = (Array.isArray(data.items) ? data.items : [])
+        .filter((item) => item?.id?.videoId && item?.snippet)
+        .map((item) => {
+          const snippet = item.snippet;
+          const videoId = item.id.videoId;
+
+          return {
+            id: videoId,
+            title: snippet.title || '未命名视频',
+            channelTitle: snippet.channelTitle || '未知频道',
+            publishedAt: snippet.publishedAt || '',
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            keyword: queryText,
+            summary: truncateText(snippet.description || ''),
+            platform: 'YouTube',
+          };
+        });
+
+      if (!results.length) {
+        setYoutubeError('没有搜索结果，请换一个关键词再试。');
+        return;
+      }
+
+      setYoutubeResults(results);
+      showToast(`已找到 ${results.length} 条 YouTube 结果`);
+    } catch {
+      setYoutubeError('网络请求失败，请检查网络连接后手动重试。');
+    } finally {
+      setYoutubeLoading(false);
+    }
+  }
+
+  function saveYouTubeResultToRadar(result) {
+    const url = result.url.trim().toLowerCase();
+    const alreadySaved = radarItems.some(
+      (item) => item.url.trim().toLowerCase() === url,
+    );
+
+    if (alreadySaved) {
+      showToast('这条视频已存在于每日雷达');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    setRadarItems((current) => [
+      normalizeRadarItem({
+        id: createId('radar'),
+        title: result.title,
+        platform: 'YouTube',
+        url: result.url,
+        keyword: result.keyword,
+        summary: result.summary,
+        valueScore: 3,
+        difficulty: '中',
+        useCase: '待整理',
+        discoveredDate: getTodayDate(),
+        status: '未处理',
+        createdAt: now,
+        updatedAt: now,
+      }),
+      ...current,
+    ]);
+
+    setRadarPlatformFilter('全部');
+    setRadarStatusFilter('全部');
+    setRadarDateFilter('');
+    setRadarQuery('');
+    setRadarSortMode('updatedDesc');
+    showToast('已保存到每日雷达');
   }
 
   function updateRadarStatus(id, status) {
@@ -1038,7 +1246,7 @@ export default function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">PromptRadar Mini V0.3</p>
+            <p className="eyebrow">PromptRadar Mini V0.4</p>
             <h1>
               {activePage === 'library' ? '我的提示词库' : '每日提示词雷达'}
             </h1>
@@ -1102,6 +1310,15 @@ export default function App() {
             sortMode={radarSortMode}
             statusFilter={radarStatusFilter}
             todayCount={todayRadarItems.length}
+            onSearchYouTube={searchYouTube}
+            onSaveYouTubeResult={saveYouTubeResultToRadar}
+            setShowYoutubeKey={setShowYoutubeKey}
+            setYoutubeSettings={updateYoutubeSettings}
+            showYoutubeKey={showYoutubeKey}
+            youtubeError={youtubeError}
+            youtubeLoading={youtubeLoading}
+            youtubeResults={youtubeResults}
+            youtubeSettings={youtubeSettings}
           />
         )}
       </section>
@@ -1440,6 +1657,15 @@ function RadarPage({
   sortMode,
   statusFilter,
   todayCount,
+  onSearchYouTube,
+  onSaveYouTubeResult,
+  setShowYoutubeKey,
+  setYoutubeSettings,
+  showYoutubeKey,
+  youtubeError,
+  youtubeLoading,
+  youtubeResults,
+  youtubeSettings,
 }) {
   return (
     <div className="radar-layout">
@@ -1665,6 +1891,155 @@ function RadarPage({
         </form>
 
         <section className="radar-list-panel">
+          <div className="youtube-panel">
+            <div className="section-heading">
+              <Search size={20} aria-hidden="true" />
+              <h2>YouTube 手动搜索</h2>
+            </div>
+            <p className="helper-copy">
+              API Key 只保存在当前浏览器 localStorage 中。YouTube
+              search.list 每次请求会消耗 API 配额，请只在需要时手动搜索。
+            </p>
+
+            <div className="youtube-settings-grid">
+              <label className="api-key-field">
+                <span>YouTube API Key</span>
+                <div className="password-row">
+                  <input
+                    autoComplete="off"
+                    type={showYoutubeKey ? 'text' : 'password'}
+                    value={youtubeSettings.apiKey}
+                    onChange={(event) =>
+                      setYoutubeSettings((current) => ({
+                        ...current,
+                        apiKey: event.target.value,
+                      }))
+                    }
+                    placeholder="粘贴你的 YouTube Data API Key"
+                  />
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => setShowYoutubeKey((value) => !value)}
+                    title={showYoutubeKey ? '隐藏 API Key' : '显示 API Key'}
+                    aria-label={showYoutubeKey ? '隐藏 API Key' : '显示 API Key'}
+                  >
+                    {showYoutubeKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </label>
+
+              <label>
+                <span>搜索关键词</span>
+                <input
+                  value={youtubeSettings.query}
+                  onChange={(event) =>
+                    setYoutubeSettings((current) => ({
+                      ...current,
+                      query: event.target.value,
+                    }))
+                  }
+                  placeholder="例如：ChatGPT prompt engineering"
+                />
+              </label>
+
+              <label>
+                <span>每次搜索结果数量</span>
+                <input
+                  max="25"
+                  min="1"
+                  type="number"
+                  value={youtubeSettings.maxResults}
+                  onChange={(event) =>
+                    setYoutubeSettings((current) => ({
+                      ...current,
+                      maxResults: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <label>
+                <span>排序方式</span>
+                <select
+                  value={youtubeSettings.order}
+                  onChange={(event) =>
+                    setYoutubeSettings((current) => ({
+                      ...current,
+                      order: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="relevance">relevance</option>
+                  <option value="date">date</option>
+                </select>
+              </label>
+            </div>
+
+            <button
+              className="primary-button"
+              disabled={youtubeLoading}
+              type="button"
+              onClick={onSearchYouTube}
+            >
+              <Search size={18} />
+              <span>{youtubeLoading ? '搜索中...' : '搜索 YouTube'}</span>
+            </button>
+
+            {youtubeError ? (
+              <div className="error-message" role="status">
+                {youtubeError}
+              </div>
+            ) : null}
+
+            {youtubeResults.length ? (
+              <div className="youtube-results" aria-label="YouTube 搜索结果">
+                {youtubeResults.map((result) => (
+                  <article className="youtube-result-card" key={result.id}>
+                    <div className="card-topline">
+                      <div className="card-meta">
+                        <span>YouTube</span>
+                        <span>{result.channelTitle}</span>
+                      </div>
+                    </div>
+                    <h3>{result.title}</h3>
+                    <p className="signal-copy">
+                      {result.summary || '该视频没有可用简介。'}
+                    </p>
+                    <div className="radar-facts">
+                      <span>关键词：{result.keyword}</span>
+                      <span>
+                        发布时间：
+                        {result.publishedAt
+                          ? new Date(result.publishedAt).toLocaleString('zh-CN', {
+                              hour12: false,
+                            })
+                          : '未知'}
+                      </span>
+                    </div>
+                    <a
+                      className="radar-link"
+                      href={result.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <LinkIcon size={16} aria-hidden="true" />
+                      <span>{result.url}</span>
+                    </a>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => onSaveYouTubeResult(result)}
+                    >
+                      <Save size={18} />
+                      <span>保存到雷达</span>
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
           <div className="summary-panel">
             <div>
               <p className="eyebrow">今日摘要</p>

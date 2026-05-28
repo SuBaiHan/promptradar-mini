@@ -740,6 +740,66 @@ textarea:focus {
   background: rgba(237, 249, 246, 0.52);
 }
 
+.youtube-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(18, 60, 58, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.94);
+}
+
+.helper-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.youtube-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.api-key-field {
+  grid-column: 1 / -1;
+}
+
+.password-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+}
+
+.error-message {
+  padding: 11px 12px;
+  border: 1px solid rgba(189, 58, 58, 0.22);
+  border-radius: 8px;
+  background: rgba(189, 58, 58, 0.08);
+  color: var(--danger);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.youtube-results {
+  display: grid;
+  gap: 12px;
+}
+
+.youtube-result-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(35, 38, 41, 0.1);
+  border-radius: 8px;
+  background: #fffefb;
+}
+
+.youtube-result-card .secondary-button {
+  justify-self: start;
+}
+
 .summary-actions {
   display: flex;
   flex-wrap: wrap;
@@ -938,6 +998,10 @@ textarea:focus {
 
 @media (max-width: 720px) {
   .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .youtube-settings-grid {
     grid-template-columns: 1fr;
   }
 
