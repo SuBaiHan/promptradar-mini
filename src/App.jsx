@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BookOpen,
+  CalendarDays,
   Check,
   ClipboardList,
   Copy,
   Download,
   Edit3,
+  FileText,
   Filter,
   Library,
   Link as LinkIcon,
@@ -16,6 +18,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 
@@ -34,7 +37,18 @@ const sceneOptions = [
   '其他',
 ];
 
+const platformOptions = [
+  'YouTube',
+  'B站',
+  '抖音',
+  '小红书',
+  '知乎',
+  '网页',
+  '其他',
+];
+
 const radarStatuses = ['未处理', '值得收藏', '已忽略', '已收藏'];
+const difficultyOptions = ['低', '中', '高'];
 
 const blankPrompt = {
   title: '',
@@ -47,10 +61,14 @@ const blankPrompt = {
 
 const blankRadarDraft = {
   title: '',
-  sourcePlatform: '',
-  link: '',
-  searchKeyword: '',
+  platform: '网页',
+  url: '',
+  keyword: '',
   summary: '',
+  valueScore: 3,
+  difficulty: '中',
+  useCase: '',
+  discoveredDate: getTodayDate(),
 };
 
 const starterPrompts = [
@@ -83,51 +101,69 @@ const starterPrompts = [
 const radarSeeds = [
   {
     title: '会议纪要到行动清单',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '会议纪要 自动整理',
+    platform: '网页',
+    url: '',
+    keyword: '会议纪要 自动整理',
     summary:
       '把会议纪要整理为关键结论、待办事项、负责人、截止时间、风险点和下次会议建议。',
+    valueScore: 4,
+    difficulty: '低',
+    useCase: '办公',
   },
   {
     title: '社媒内容变体生成器',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '社媒文案 多版本生成',
+    platform: '网页',
+    url: '',
+    keyword: '社媒文案 多版本生成',
     summary:
       '基于同一主题生成多条不同风格的社媒文案，适合做内容方向探索。',
+    valueScore: 4,
+    difficulty: '中',
+    useCase: '写作',
   },
   {
     title: '学习路线规划师',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '14 天学习计划',
+    platform: '知乎',
+    url: '',
+    keyword: '14 天学习计划',
     summary:
       '把宽泛学习目标拆成每天的学习目标、练习任务、验收方式和复盘问题。',
+    valueScore: 5,
+    difficulty: '低',
+    useCase: '学习',
   },
   {
     title: '用户访谈问题生成',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '用户访谈 提纲',
+    platform: '网页',
+    url: '',
+    keyword: '用户访谈 提纲',
     summary:
       '围绕产品假设生成 30 分钟访谈提纲，包含破冰、行为问题、追问和反诱导表达。',
+    valueScore: 4,
+    difficulty: '中',
+    useCase: '资料查询',
   },
   {
     title: '长文结构诊断',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '文章结构 诊断',
+    platform: '小红书',
+    url: '',
+    keyword: '文章结构 诊断',
     summary:
       '检查文章草稿的结构问题、论证跳跃、重复段落和读者困惑点，并输出更清晰的大纲。',
+    valueScore: 5,
+    difficulty: '中',
+    useCase: '写作',
   },
   {
     title: '轻量竞品分析',
-    sourcePlatform: 'PromptRadar 精选',
-    link: '',
-    searchKeyword: '竞品分析 表格',
+    platform: '网页',
+    url: '',
+    keyword: '竞品分析 表格',
     summary:
       '基于人工收集的竞品信息，整理目标用户、核心功能、定价、差异化和可借鉴机会。',
+    valueScore: 4,
+    difficulty: '高',
+    useCase: '办公',
   },
 ];
 
@@ -138,6 +174,14 @@ const navItems = [
 
 function createId(prefix = 'item') {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getTodayDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const date = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${date}`;
 }
 
 function parseTags(value = '') {
@@ -170,6 +214,31 @@ function inferScene(prompt) {
   return sceneMap[value] || '其他';
 }
 
+function mapUseCaseToScene(useCase = '') {
+  const value = useCase.trim();
+
+  if (sceneOptions.includes(value)) {
+    return value;
+  }
+
+  const matchers = [
+    ['写作', ['写作', '文章', '文案', '编辑', '润色']],
+    ['翻译', ['翻译', '双语', '本地化']],
+    ['编程', ['编程', '代码', '研发', '开发', '调试']],
+    ['图片生成', ['图片', '图像', '绘画', '海报', 'midjourney', 'stable diffusion']],
+    ['视频生成', ['视频', '剪辑', '分镜', '短视频']],
+    ['办公', ['办公', '会议', '表格', '汇报', '邮件', '项目']],
+    ['学习', ['学习', '课程', '复习', '计划']],
+    ['资料查询', ['查询', '资料', '研究', '搜索', '信息']],
+  ];
+  const lowerValue = value.toLowerCase();
+  const found = matchers.find(([, keywords]) =>
+    keywords.some((keyword) => lowerValue.includes(keyword.toLowerCase())),
+  );
+
+  return found?.[0] || '其他';
+}
+
 function normalizePrompt(prompt) {
   const now = new Date().toISOString();
   const createdAt = prompt.createdAt || now;
@@ -185,6 +254,29 @@ function normalizePrompt(prompt) {
     createdAt,
     updatedAt: prompt.updatedAt || createdAt,
   };
+}
+
+function normalizePlatform(value) {
+  return platformOptions.includes(value) ? value : '其他';
+}
+
+function normalizeDifficulty(value) {
+  return difficultyOptions.includes(value) ? value : '中';
+}
+
+function normalizeScore(value) {
+  const score = Number(value);
+  if (Number.isNaN(score)) {
+    return 3;
+  }
+  return Math.min(5, Math.max(1, Math.round(score)));
+}
+
+function normalizeDate(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  return getTodayDate();
 }
 
 function loadPrompts() {
@@ -205,15 +297,17 @@ function buildDailyRadarItems() {
   const now = new Date();
   const start = new Date(now.getFullYear(), 0, 0);
   const dayIndex = Math.floor((now - start) / 86400000);
+  const today = getTodayDate();
 
   return Array.from({ length: 3 }, (_, index) => {
     const seed = radarSeeds[(dayIndex + index * 2) % radarSeeds.length];
     const createdAt = new Date().toISOString();
 
     return {
-      id: `daily-${dayIndex}-${index}`,
+      id: `daily-${today}-${index}`,
       ...seed,
       status: '未处理',
+      discoveredDate: today,
       createdAt,
       updatedAt: createdAt,
     };
@@ -223,15 +317,22 @@ function buildDailyRadarItems() {
 function normalizeRadarItem(item) {
   const now = new Date().toISOString();
   const createdAt = item.createdAt || now;
+  const platform = item.platform || item.sourcePlatform || '其他';
+  const url = item.url || item.link || '';
+  const keyword = item.keyword || item.searchKeyword || '';
   const status = radarStatuses.includes(item.status) ? item.status : '未处理';
 
   return {
     id: item.id || createId('radar'),
     title: item.title || '未命名雷达内容',
-    sourcePlatform: item.sourcePlatform || '手动记录',
-    link: item.link || '',
-    searchKeyword: item.searchKeyword || item.keyword || '',
+    platform: normalizePlatform(platform),
+    url,
+    keyword,
     summary: item.summary || item.signal || item.content || '',
+    valueScore: normalizeScore(item.valueScore),
+    difficulty: normalizeDifficulty(item.difficulty),
+    useCase: item.useCase || '',
+    discoveredDate: normalizeDate(item.discoveredDate),
     status,
     createdAt,
     updatedAt: item.updatedAt || createdAt,
@@ -242,13 +343,13 @@ function loadRadarItems() {
   try {
     const saved = localStorage.getItem(RADAR_STORAGE_KEY);
     if (!saved) {
-      return buildDailyRadarItems();
+      return buildDailyRadarItems().map(normalizeRadarItem);
     }
 
     const parsed = JSON.parse(saved);
     return Array.isArray(parsed) ? parsed.map(normalizeRadarItem) : [];
   } catch {
-    return buildDailyRadarItems();
+    return buildDailyRadarItems().map(normalizeRadarItem);
   }
 }
 
@@ -267,10 +368,13 @@ function formatRadarAsPromptContent(item) {
     '请基于以下雷达来源内容，提炼可执行的 AI 提示词或工作流：',
     '',
     `标题：${item.title}`,
-    `来源平台：${item.sourcePlatform || '未填写'}`,
-    `搜索关键词：${item.searchKeyword || '未填写'}`,
-    `简要说明：${item.summary || '未填写'}`,
-    `链接：${item.link || '未填写'}`,
+    `来源平台：${item.platform || '未填写'}`,
+    `搜索关键词：${item.keyword || '未填写'}`,
+    `适用场景：${item.useCase || '未填写'}`,
+    `使用难度：${item.difficulty || '未填写'}`,
+    `推荐价值评分：${item.valueScore || 3}/5`,
+    `内容摘要：${item.summary || '未填写'}`,
+    `链接：${item.url || '未填写'}`,
   ].join('\n');
 }
 
@@ -343,6 +447,40 @@ function buildCsvExport(prompts) {
   return `\uFEFF${csv}`;
 }
 
+function buildDailySummary(items, date) {
+  const groups = items.reduce((result, item) => {
+    const key = item.platform || '其他';
+    return {
+      ...result,
+      [key]: [...(result[key] || []), item],
+    };
+  }, {});
+  const lines = [
+    `# PromptRadar Mini 今日雷达摘要`,
+    '',
+    `日期：${date}`,
+    `内容数量：${items.length}`,
+    '',
+  ];
+
+  Object.entries(groups).forEach(([platform, groupItems]) => {
+    lines.push(`## ${platform}`);
+    lines.push('');
+    groupItems.forEach((item, index) => {
+      lines.push(`### ${index + 1}. ${item.title}`);
+      lines.push('');
+      lines.push(`- 链接：${item.url || '未填写'}`);
+      lines.push(`- 推荐价值评分：${item.valueScore}/5`);
+      lines.push(`- 状态：${item.status}`);
+      lines.push('');
+      lines.push(escapeMarkdown(item.summary || '无摘要'));
+      lines.push('');
+    });
+  });
+
+  return lines.join('\n');
+}
+
 function downloadTextFile(filename, content, type) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
@@ -371,6 +509,88 @@ function sortByUpdatedAtDesc(items) {
   );
 }
 
+function sortRadarItems(items, sortMode) {
+  const sorted = [...items];
+
+  if (sortMode === 'scoreDesc') {
+    return sorted.sort(
+      (a, b) =>
+        b.valueScore - a.valueScore ||
+        new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0),
+    );
+  }
+
+  if (sortMode === 'scoreAsc') {
+    return sorted.sort(
+      (a, b) =>
+        a.valueScore - b.valueScore ||
+        new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0),
+    );
+  }
+
+  if (sortMode === 'dateDesc') {
+    return sorted.sort(
+      (a, b) =>
+        b.discoveredDate.localeCompare(a.discoveredDate) ||
+        new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0),
+    );
+  }
+
+  return sortByUpdatedAtDesc(sorted);
+}
+
+function parseBatchImport(text, existingItems) {
+  const existingUrls = new Set(
+    existingItems
+      .map((item) => item.url.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const existingTitles = new Set(
+    existingItems.map((item) => item.title.trim().toLowerCase()).filter(Boolean),
+  );
+
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [rawTitle, rawPlatform, rawUrl, rawKeyword, rawSummary] = line
+        .split('|')
+        .map((part) => part.trim());
+      const title = rawTitle || `未命名来源 ${index + 1}`;
+      const platform = normalizePlatform(rawPlatform || '其他');
+      const url = rawUrl || '';
+      const keyword = rawKeyword || '';
+      const summary = rawSummary || '';
+      const warnings = [];
+
+      if (url && existingUrls.has(url.toLowerCase())) {
+        warnings.push('可能重复：已有相同链接');
+      }
+      if (title && existingTitles.has(title.toLowerCase())) {
+        warnings.push('可能重复：已有相同标题');
+      }
+      if (rawPlatform && platform === '其他' && rawPlatform !== '其他') {
+        warnings.push('平台不在选项内，已设为其他');
+      }
+
+      return {
+        importKey: `batch-${Date.now()}-${index}`,
+        title,
+        platform,
+        url,
+        keyword,
+        summary,
+        valueScore: 3,
+        difficulty: '中',
+        useCase: '',
+        discoveredDate: getTodayDate(),
+        status: '未处理',
+        warnings,
+      };
+    });
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('library');
   const [prompts, setPrompts] = useState(loadPrompts);
@@ -382,6 +602,13 @@ export default function App() {
   const [sceneFilter, setSceneFilter] = useState('全部');
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [radarStatusFilter, setRadarStatusFilter] = useState('全部');
+  const [radarPlatformFilter, setRadarPlatformFilter] = useState('全部');
+  const [radarDateFilter, setRadarDateFilter] = useState('');
+  const [radarSortMode, setRadarSortMode] = useState('updatedDesc');
+  const [radarQuery, setRadarQuery] = useState('');
+  const [batchText, setBatchText] = useState('');
+  const [batchPreview, setBatchPreview] = useState([]);
+  const [dailySummary, setDailySummary] = useState('');
   const [copiedId, setCopiedId] = useState('');
   const [toast, setToast] = useState('');
 
@@ -424,10 +651,39 @@ export default function App() {
   }, [favoriteOnly, prompts, query, sceneFilter]);
 
   const filteredRadarItems = useMemo(() => {
-    return sortByUpdatedAtDesc(radarItems).filter(
-      (item) => radarStatusFilter === '全部' || item.status === radarStatusFilter,
+    const keyword = radarQuery.trim().toLowerCase();
+    const filtered = radarItems.filter((item) => {
+      const matchesStatus =
+        radarStatusFilter === '全部' || item.status === radarStatusFilter;
+      const matchesPlatform =
+        radarPlatformFilter === '全部' || item.platform === radarPlatformFilter;
+      const matchesDate =
+        !radarDateFilter || item.discoveredDate === radarDateFilter;
+      const searchable = [item.title, item.summary, item.keyword, item.useCase]
+        .join(' ')
+        .toLowerCase();
+      const matchesKeyword = !keyword || searchable.includes(keyword);
+
+      return matchesStatus && matchesPlatform && matchesDate && matchesKeyword;
+    });
+
+    return sortRadarItems(filtered, radarSortMode);
+  }, [
+    radarDateFilter,
+    radarItems,
+    radarPlatformFilter,
+    radarQuery,
+    radarSortMode,
+    radarStatusFilter,
+  ]);
+
+  const todayRadarItems = useMemo(() => {
+    const today = getTodayDate();
+    return sortRadarItems(
+      radarItems.filter((item) => item.discoveredDate === today),
+      'scoreDesc',
     );
-  }, [radarItems, radarStatusFilter]);
+  }, [radarItems]);
 
   const stats = useMemo(() => {
     const scenes = new Set(prompts.map((prompt) => prompt.scene));
@@ -583,30 +839,34 @@ export default function App() {
     event.preventDefault();
 
     const title = radarDraft.title.trim();
-    const summary = radarDraft.summary.trim();
+    const platform = radarDraft.platform;
 
-    if (!title || !summary) {
-      showToast('请先填写雷达标题和简要说明');
+    if (!title || !platform) {
+      showToast('请先填写标题和来源平台');
       return;
     }
 
     const now = new Date().toISOString();
     setRadarItems((current) => [
-      {
+      normalizeRadarItem({
         id: createId('radar'),
         title,
-        sourcePlatform: radarDraft.sourcePlatform.trim() || '手动记录',
-        link: radarDraft.link.trim(),
-        searchKeyword: radarDraft.searchKeyword.trim(),
-        summary,
+        platform,
+        url: radarDraft.url.trim(),
+        keyword: radarDraft.keyword.trim(),
+        summary: radarDraft.summary.trim(),
+        valueScore: radarDraft.valueScore,
+        difficulty: radarDraft.difficulty,
+        useCase: radarDraft.useCase.trim(),
+        discoveredDate: radarDraft.discoveredDate || getTodayDate(),
         status: '未处理',
         createdAt: now,
         updatedAt: now,
-      },
+      }),
       ...current,
     ]);
-    setRadarDraft(blankRadarDraft);
-    showToast('雷达内容已添加');
+    setRadarDraft({ ...blankRadarDraft, discoveredDate: getTodayDate() });
+    showToast(radarDraft.url.trim() ? '雷达内容已添加' : '未填写来源链接，已保存');
   }
 
   function updateRadarStatus(id, status) {
@@ -629,11 +889,80 @@ export default function App() {
     showToast('雷达内容已删除');
   }
 
+  function previewBatchImport() {
+    const preview = parseBatchImport(batchText, radarItems);
+    if (!preview.length) {
+      showToast('请先粘贴要导入的内容');
+      return;
+    }
+
+    setBatchPreview(preview);
+    showToast(`已生成 ${preview.length} 条预览`);
+  }
+
+  function confirmBatchImport() {
+    if (!batchPreview.length) {
+      showToast('请先生成导入预览');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const imported = batchPreview.map((item) =>
+      normalizeRadarItem({
+        ...item,
+        id: createId('radar'),
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    setRadarItems((current) => [...imported, ...current]);
+    setBatchText('');
+    setBatchPreview([]);
+    showToast(`已导入 ${imported.length} 条雷达内容`);
+  }
+
+  function generateDailySummary() {
+    const today = getTodayDate();
+    if (!todayRadarItems.length) {
+      setDailySummary('');
+      showToast('暂无今日雷达内容');
+      window.alert('暂无今日雷达内容');
+      return '';
+    }
+
+    const summary = buildDailySummary(todayRadarItems, today);
+    setDailySummary(summary);
+    showToast('今日摘要已生成');
+    return summary;
+  }
+
+  function copyDailySummary() {
+    const summary = dailySummary || generateDailySummary();
+    if (!summary) {
+      return;
+    }
+    copyText(summary, 'daily-summary', '已复制今日摘要');
+  }
+
+  function exportDailySummary() {
+    const summary = dailySummary || generateDailySummary();
+    if (!summary) {
+      return;
+    }
+    downloadTextFile(
+      `promptradar-daily-summary-${getTodayDate()}.md`,
+      summary,
+      'text/markdown;charset=utf-8',
+    );
+    showToast('今日摘要 Markdown 已导出');
+  }
+
   function transferRadarToPrompt(item) {
     const alreadySaved = prompts.some(
       (prompt) =>
         prompt.title === item.title &&
-        prompt.note.includes(`来源平台：${item.sourcePlatform || '未填写'}`),
+        prompt.note.trim().toLowerCase() === item.summary.trim().toLowerCase(),
     );
     const now = new Date().toISOString();
 
@@ -642,18 +971,12 @@ export default function App() {
         {
           id: createId('prompt'),
           title: item.title,
-          scene: '资料查询',
+          scene: mapUseCaseToScene(item.useCase),
           content: formatRadarAsPromptContent(item),
           tags: parseTags(
-            ['雷达', item.sourcePlatform, item.searchKeyword]
-              .filter(Boolean)
-              .join(', '),
+            ['雷达', item.platform, item.keyword].filter(Boolean).join(', '),
           ),
-          note: [
-            `来源平台：${item.sourcePlatform || '未填写'}`,
-            `链接：${item.link || '未填写'}`,
-            `简要说明：${item.summary || '未填写'}`,
-          ].join('\n'),
+          note: item.summary || '',
           favorite: true,
           createdAt: now,
           updatedAt: now,
@@ -715,7 +1038,7 @@ export default function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">PromptRadar Mini V0.2</p>
+            <p className="eyebrow">PromptRadar Mini V0.3</p>
             <h1>
               {activePage === 'library' ? '我的提示词库' : '每日提示词雷达'}
             </h1>
@@ -751,15 +1074,34 @@ export default function App() {
           />
         ) : (
           <RadarPage
+            batchPreview={batchPreview}
+            batchText={batchText}
+            copiedId={copiedId}
+            dailySummary={dailySummary}
             draft={radarDraft}
             filteredItems={filteredRadarItems}
+            onBatchTextChange={setBatchText}
             onChange={setRadarDraft}
+            onConfirmBatchImport={confirmBatchImport}
+            onCopyDailySummary={copyDailySummary}
             onDelete={deleteRadarItem}
+            onExportDailySummary={exportDailySummary}
+            onGenerateDailySummary={generateDailySummary}
+            onPreviewBatchImport={previewBatchImport}
             onStatusChange={updateRadarStatus}
             onSubmit={handleRadarSubmit}
             onTransfer={transferRadarToPrompt}
+            query={radarQuery}
+            setDateFilter={setRadarDateFilter}
+            setPlatformFilter={setRadarPlatformFilter}
+            setQuery={setRadarQuery}
+            setSortMode={setRadarSortMode}
             setStatusFilter={setRadarStatusFilter}
+            dateFilter={radarDateFilter}
+            platformFilter={radarPlatformFilter}
+            sortMode={radarSortMode}
             statusFilter={radarStatusFilter}
+            todayCount={todayRadarItems.length}
           />
         )}
       </section>
@@ -1070,22 +1412,41 @@ function PromptCard({
 }
 
 function RadarPage({
+  batchPreview,
+  batchText,
+  copiedId,
+  dailySummary,
+  dateFilter,
   draft,
   filteredItems,
+  onBatchTextChange,
   onChange,
+  onConfirmBatchImport,
+  onCopyDailySummary,
   onDelete,
+  onExportDailySummary,
+  onGenerateDailySummary,
+  onPreviewBatchImport,
   onStatusChange,
   onSubmit,
   onTransfer,
+  platformFilter,
+  query,
+  setDateFilter,
+  setPlatformFilter,
+  setQuery,
+  setSortMode,
   setStatusFilter,
+  sortMode,
   statusFilter,
+  todayCount,
 }) {
   return (
     <div className="radar-layout">
       <section className="radar-overview">
         <div>
           <p className="eyebrow">今日发现</p>
-          <h2>记录值得研究的提示词线索，再转入你的本地提示词库</h2>
+          <h2>收集提示词线索，评分筛选，再转入你的本地提示词库</h2>
         </div>
         <div className="radar-pulse" aria-hidden="true">
           <Radar size={42} />
@@ -1096,70 +1457,143 @@ function RadarPage({
         <form className="radar-form" onSubmit={onSubmit}>
           <div className="section-heading">
             <Plus size={20} aria-hidden="true" />
-            <h2>新增雷达来源</h2>
+            <h2>新增雷达内容</h2>
           </div>
 
+          <label>
+            <span>标题</span>
+            <input
+              value={draft.title}
+              onChange={(event) =>
+                onChange((current) => ({
+                  ...current,
+                  title: event.target.value,
+                }))
+              }
+              placeholder="例如：ChatGPT 高效写作提示词"
+              required
+            />
+          </label>
+
           <div className="form-row">
-            <label>
-              <span>标题</span>
-              <input
-                value={draft.title}
-                onChange={(event) =>
-                  onChange((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-                placeholder="例如：客服回复优化模板"
-                required
-              />
-            </label>
             <label>
               <span>来源平台</span>
-              <input
-                value={draft.sourcePlatform}
+              <select
+                required
+                value={draft.platform}
                 onChange={(event) =>
                   onChange((current) => ({
                     ...current,
-                    sourcePlatform: event.target.value,
+                    platform: event.target.value,
                   }))
                 }
-                placeholder="例如：博客、社区、手动记录"
-              />
-            </label>
-          </div>
-
-          <div className="form-row">
-            <label>
-              <span>链接</span>
-              <input
-                value={draft.link}
-                onChange={(event) =>
-                  onChange((current) => ({
-                    ...current,
-                    link: event.target.value,
-                  }))
-                }
-                placeholder="可选，粘贴原始链接"
-              />
+              >
+                {platformOptions.map((platform) => (
+                  <option key={platform} value={platform}>
+                    {platform}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
-              <span>搜索关键词</span>
+              <span>发现日期</span>
               <input
-                value={draft.searchKeyword}
+                type="date"
+                value={draft.discoveredDate}
                 onChange={(event) =>
                   onChange((current) => ({
                     ...current,
-                    searchKeyword: event.target.value,
+                    discoveredDate: event.target.value,
                   }))
                 }
-                placeholder="例如：AI prompt workflow"
               />
             </label>
           </div>
 
           <label>
-            <span>简要说明</span>
+            <span>来源链接</span>
+            <input
+              value={draft.url}
+              onChange={(event) =>
+                onChange((current) => ({
+                  ...current,
+                  url: event.target.value,
+                }))
+              }
+              placeholder="可留空"
+            />
+          </label>
+
+          <div className="form-row">
+            <label>
+              <span>搜索关键词</span>
+              <input
+                value={draft.keyword}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    keyword: event.target.value,
+                  }))
+                }
+                placeholder="例如：AI 写作"
+              />
+            </label>
+            <label>
+              <span>适用场景</span>
+              <input
+                value={draft.useCase}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    useCase: event.target.value,
+                  }))
+                }
+                placeholder="例如：写作 / 办公 / 图片生成"
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              <span>推荐价值评分</span>
+              <select
+                value={draft.valueScore}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    valueScore: Number(event.target.value),
+                  }))
+                }
+              >
+                {[1, 2, 3, 4, 5].map((score) => (
+                  <option key={score} value={score}>
+                    {score} 分
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>使用难度</span>
+              <select
+                value={draft.difficulty}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    difficulty: event.target.value,
+                  }))
+                }
+              >
+                {difficultyOptions.map((difficulty) => (
+                  <option key={difficulty} value={difficulty}>
+                    {difficulty}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label>
+            <span>内容摘要</span>
             <textarea
               className="note-input"
               value={draft.summary}
@@ -1169,8 +1603,7 @@ function RadarPage({
                   summary: event.target.value,
                 }))
               }
-              placeholder="这个来源为什么值得记录？可以解决什么问题？"
-              required
+              placeholder="简要记录这个来源的价值"
               rows={4}
             />
           </label>
@@ -1179,9 +1612,149 @@ function RadarPage({
             <Plus size={18} />
             <span>添加到雷达</span>
           </button>
+
+          <div className="form-divider" />
+
+          <div className="section-heading">
+            <Upload size={20} aria-hidden="true" />
+            <h2>批量导入</h2>
+          </div>
+          <label>
+            <span>多行内容</span>
+            <textarea
+              className="batch-input"
+              value={batchText}
+              onChange={(event) => onBatchTextChange(event.target.value)}
+              placeholder="标题 | 平台 | 链接 | 关键词 | 简要说明"
+              rows={7}
+            />
+          </label>
+          <div className="form-actions">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onPreviewBatchImport}
+            >
+              <FileText size={18} />
+              <span>预览导入</span>
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onConfirmBatchImport}
+            >
+              <Check size={18} />
+              <span>确认导入</span>
+            </button>
+          </div>
+          {batchPreview.length ? (
+            <div className="batch-preview">
+              {batchPreview.map((item) => (
+                <div className="preview-row" key={item.importKey}>
+                  <strong>{item.title}</strong>
+                  <span>
+                    {item.platform} / {item.keyword || '无关键词'}
+                  </span>
+                  {item.warnings.length ? (
+                    <em>{item.warnings.join('；')}</em>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </form>
 
         <section className="radar-list-panel">
+          <div className="summary-panel">
+            <div>
+              <p className="eyebrow">今日摘要</p>
+              <h2>{todayCount} 条今日雷达内容</h2>
+            </div>
+            <div className="summary-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onGenerateDailySummary}
+              >
+                <Sparkles size={18} />
+                <span>生成今日摘要</span>
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={onCopyDailySummary}
+                title="复制今日摘要"
+                aria-label="复制今日摘要"
+              >
+                {copiedId === 'daily-summary' ? (
+                  <Check size={18} />
+                ) : (
+                  <Copy size={18} />
+                )}
+              </button>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={onExportDailySummary}
+                title="导出今日摘要 Markdown"
+                aria-label="导出今日摘要 Markdown"
+              >
+                <Download size={18} />
+              </button>
+            </div>
+            {dailySummary ? (
+              <pre className="summary-output">{dailySummary}</pre>
+            ) : null}
+          </div>
+
+          <div className="toolbar stackable radar-toolbar">
+            <div className="search-box">
+              <Search size={18} aria-hidden="true" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索标题、摘要、关键词或适用场景"
+              />
+            </div>
+            <div className="filter-select">
+              <Filter size={17} aria-hidden="true" />
+              <select
+                value={platformFilter}
+                onChange={(event) => setPlatformFilter(event.target.value)}
+                aria-label="按平台筛选"
+              >
+                <option value="全部">全部平台</option>
+                {platformOptions.map((platform) => (
+                  <option key={platform} value={platform}>
+                    {platform}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-select">
+              <CalendarDays size={17} aria-hidden="true" />
+              <input
+                aria-label="按发现日期筛选"
+                type="date"
+                value={dateFilter}
+                onChange={(event) => setDateFilter(event.target.value)}
+              />
+            </div>
+            <div className="filter-select">
+              <Star size={17} aria-hidden="true" />
+              <select
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value)}
+                aria-label="排序"
+              >
+                <option value="updatedDesc">最近更新</option>
+                <option value="scoreDesc">评分高到低</option>
+                <option value="scoreAsc">评分低到高</option>
+                <option value="dateDesc">发现日期新到旧</option>
+              </select>
+            </div>
+          </div>
+
           <div className="filter-bar radar-filter" aria-label="雷达状态筛选">
             <span className="filter-label">状态</span>
             {['全部', ...radarStatuses].map((status) => (
@@ -1212,8 +1785,8 @@ function RadarPage({
             ) : (
               <div className="empty-state full-row">
                 <Radar size={30} aria-hidden="true" />
-                <strong>当前状态下暂无雷达内容</strong>
-                <span>切换状态筛选，或手动新增一条来源内容。</span>
+                <strong>当前筛选下暂无雷达内容</strong>
+                <span>调整筛选条件，或手动新增一条来源内容。</span>
               </div>
             )}
           </div>
@@ -1228,7 +1801,7 @@ function RadarCard({ item, onDelete, onStatusChange, onTransfer }) {
     <article className="radar-card">
       <div className="card-topline">
         <div className="card-meta">
-          <span>{item.sourcePlatform}</span>
+          <span>{item.platform}</span>
           <span className={`status-badge status-${item.status}`}>
             {item.status}
           </span>
@@ -1244,17 +1817,27 @@ function RadarCard({ item, onDelete, onStatusChange, onTransfer }) {
         </button>
       </div>
       <h3>{item.title}</h3>
-      <p className="signal-copy">{item.summary}</p>
-      <div className="radar-detail">
-        <Search size={16} aria-hidden="true" />
-        <span>{item.searchKeyword || '未填写搜索关键词'}</span>
+      <p className="signal-copy">{item.summary || '暂无摘要'}</p>
+
+      <div className="radar-facts" aria-label="雷达内容信息">
+        <span>关键词：{item.keyword || '未填写'}</span>
+        <span>评分：{item.valueScore}/5</span>
+        <span>难度：{item.difficulty}</span>
+        <span>场景：{item.useCase || '未填写'}</span>
+        <span>发现：{item.discoveredDate}</span>
       </div>
-      {item.link ? (
-        <a className="radar-link" href={item.link} target="_blank" rel="noreferrer">
+
+      {item.url ? (
+        <a className="radar-link" href={item.url} target="_blank" rel="noreferrer">
           <LinkIcon size={16} aria-hidden="true" />
-          <span>{item.link}</span>
+          <span>{item.url}</span>
         </a>
-      ) : null}
+      ) : (
+        <div className="radar-detail">
+          <LinkIcon size={16} aria-hidden="true" />
+          <span>未填写来源链接</span>
+        </div>
+      )}
 
       <div className="radar-card-controls">
         <label>
@@ -1271,7 +1854,9 @@ function RadarCard({ item, onDelete, onStatusChange, onTransfer }) {
           </select>
         </label>
         <button
-          className={item.status === '已收藏' ? 'secondary-button saved' : 'secondary-button'}
+          className={
+            item.status === '已收藏' ? 'secondary-button saved' : 'secondary-button'
+          }
           disabled={item.status === '已收藏'}
           type="button"
           onClick={onTransfer}
