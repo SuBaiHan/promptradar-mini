@@ -118,6 +118,15 @@ config/youtube-keywords.json
 chore: update daily YouTube radar data
 ```
 
+## V0.5.1 验收状态
+
+- GitHub Actions 已成功触发。
+- `public/daily-prompts.json` 已自动生成。
+- 每日自动推荐区域可正常显示。
+- 自动推荐可保存到每日雷达。
+- 重复 URL 可正常拦截。
+- 未发现 API Key 泄露。
+
 ## 备份建议
 
 - 提示词库建议定期导出 Markdown，便于保存到个人知识库。
