@@ -299,9 +299,26 @@ function normalizeYoutubeSettings(settings = {}) {
   };
 }
 
+function readStorageItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorageItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function loadYoutubeSettings() {
   try {
-    const saved = localStorage.getItem(YOUTUBE_SETTINGS_STORAGE_KEY);
+    const saved = readStorageItem(YOUTUBE_SETTINGS_STORAGE_KEY);
     if (!saved) {
       return defaultYoutubeSettings;
     }
@@ -324,21 +341,30 @@ function truncateText(value = '', maxLength = 120) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
-function getReadableYoutubeError(error) {
+function getReadableYoutubeError(error, status) {
   const reason = error?.errors?.[0]?.reason || error?.reason || '';
   const message = error?.message || '';
 
   if (['quotaExceeded', 'dailyLimitExceeded'].includes(reason)) {
-    return 'YouTube API 配额不足，请稍后再试或检查 Google Cloud 配额。';
+    return 'YouTube API 配额不足，本次搜索没有完成。请稍后再试，或检查 Google Cloud 配额。';
+  }
+
+  if (['keyInvalid', 'badRequest'].includes(reason)) {
+    return 'YouTube API Key 无效，请检查是否复制完整，或在 Google Cloud 中重新生成。';
+  }
+
+  if (['accessNotConfigured', 'projectBlocked'].includes(reason)) {
+    return '请求被 YouTube 拒绝，请确认已在 Google Cloud 中启用 YouTube Data API v3。';
   }
 
   if (
-    ['keyInvalid', 'badRequest', 'forbidden', 'accessNotConfigured'].includes(
+    ['forbidden', 'ipRefererBlocked', 'refererNotAllowedMapError'].includes(
       reason,
     ) ||
+    status === 403 ||
     message.toLowerCase().includes('api key')
   ) {
-    return '请求被 YouTube 拒绝，请检查 API Key 是否正确、API 是否已启用。';
+    return '请求被 YouTube 拒绝，请检查 API Key 权限、来源限制或 API 配额设置。';
   }
 
   if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
@@ -350,7 +376,7 @@ function getReadableYoutubeError(error) {
 
 function loadPrompts() {
   try {
-    const saved = localStorage.getItem(PROMPTS_STORAGE_KEY);
+    const saved = readStorageItem(PROMPTS_STORAGE_KEY);
     if (!saved) {
       return starterPrompts.map(normalizePrompt);
     }
@@ -410,7 +436,7 @@ function normalizeRadarItem(item) {
 
 function loadRadarItems() {
   try {
-    const saved = localStorage.getItem(RADAR_STORAGE_KEY);
+    const saved = readStorageItem(RADAR_STORAGE_KEY);
     if (!saved) {
       return buildDailyRadarItems().map(normalizeRadarItem);
     }
@@ -687,15 +713,15 @@ export default function App() {
   const [toast, setToast] = useState('');
 
   useEffect(() => {
-    localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(prompts));
+    writeStorageItem(PROMPTS_STORAGE_KEY, JSON.stringify(prompts));
   }, [prompts]);
 
   useEffect(() => {
-    localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(radarItems));
+    writeStorageItem(RADAR_STORAGE_KEY, JSON.stringify(radarItems));
   }, [radarItems]);
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStorageItem(
       YOUTUBE_SETTINGS_STORAGE_KEY,
       JSON.stringify(normalizeYoutubeSettings(youtubeSettings)),
     );
@@ -963,13 +989,13 @@ export default function App() {
     const queryText = youtubeSettings.query.trim();
 
     if (!apiKey) {
-      setYoutubeError('请先填写 YouTube API Key。');
+      setYoutubeError('YouTube API Key 为空，请先填写后再搜索。');
       showToast('请先填写 YouTube API Key');
       return;
     }
 
     if (!queryText) {
-      setYoutubeError('请先填写搜索关键词。');
+      setYoutubeError('搜索关键词为空，请输入你想查找的提示词主题。');
       showToast('请先填写搜索关键词');
       return;
     }
@@ -1002,7 +1028,7 @@ export default function App() {
       }
 
       if (!response.ok || data?.error) {
-        setYoutubeError(getReadableYoutubeError(data?.error));
+        setYoutubeError(getReadableYoutubeError(data?.error, response.status));
         return;
       }
 
@@ -1025,14 +1051,14 @@ export default function App() {
         });
 
       if (!results.length) {
-        setYoutubeError('没有搜索结果，请换一个关键词再试。');
+        setYoutubeError('没有找到相关 YouTube 视频，请换一个关键词再试。');
         return;
       }
 
       setYoutubeResults(results);
       showToast(`已找到 ${results.length} 条 YouTube 结果`);
     } catch {
-      setYoutubeError('网络请求失败，请检查网络连接后手动重试。');
+      setYoutubeError('网络请求失败，请检查网络连接后再手动搜索。');
     } finally {
       setYoutubeLoading(false);
     }
@@ -1897,7 +1923,7 @@ function RadarPage({
               <h2>YouTube 手动搜索</h2>
             </div>
             <p className="helper-copy">
-              API Key 只保存在当前浏览器 localStorage 中。YouTube
+              API Key 只保存在当前浏览器 localStorage 中，清理浏览器数据可能丢失。YouTube
               search.list 每次请求会消耗 API 配额，请只在需要时手动搜索。
             </p>
 
